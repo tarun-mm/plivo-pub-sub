@@ -1,13 +1,12 @@
-# Test Clients for PubSub System
+# WebSocket Test Client
 
-This folder contains test clients for the WebSocket PubSub system.
+This folder contains a Go-based interactive test client for the WebSocket PubSub system.
 
-## Go Test Client
+## Prerequisites
 
-### Prerequisites
-The Go client uses the same dependencies as the main project (already in `go.mod`).
+The test client uses the same dependencies as the main project (already in `go.mod`).
 
-### Running the Go Client
+## Running the Test Client
 
 From the project root:
 ```bash
@@ -19,34 +18,14 @@ Or with custom options:
 go run test-clients/main.go -url ws://localhost:8080 -client my-client-id
 ```
 
-### Building the Go Client
+## Building the Test Client
 
 ```bash
 go build -o test-clients/pubsub-client test-clients/main.go
 ./test-clients/pubsub-client
 ```
 
-## Node.js Test Client
-
-### Prerequisites
-```bash
-cd test-clients
-npm install
-```
-
-### Running the Node.js Client
-
-```bash
-cd test-clients
-node test-client.js
-```
-
-Or with custom server URL:
-```bash
-node test-client.js ws://localhost:8080
-```
-
-## Available Commands (Both Clients)
+## Available Commands
 
 Once connected, you can use these commands:
 

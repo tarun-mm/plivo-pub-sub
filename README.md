@@ -402,11 +402,9 @@ GET /stats
 
 ## 🧪 Testing
 
-### Test Clients
+### Interactive Test Client
 
-The repository includes both **Go** and **Node.js** test clients in the `test-clients/` folder.
-
-#### Go Test Client (Recommended)
+The repository includes a Go-based interactive test client in the `test-clients/` folder.
 
 ```bash
 # Run directly
@@ -420,20 +418,7 @@ go build -o test-clients/pubsub-client test-clients/main.go
 go run test-clients/main.go -url ws://localhost:8080 -client my-client-id
 ```
 
-#### Node.js Test Client
-
-```bash
-# Install dependencies
-cd test-clients && npm install
-
-# Run client
-node test-client.js
-
-# Or connect to custom server
-node test-client.js ws://example.com:8080
-```
-
-**Test Client Commands (both clients):**
+**Test Client Commands:**
 ```
 sub orders 5        - Subscribe to 'orders' topic, get last 5 messages
 pub orders hello    - Publish "hello" to 'orders'
@@ -491,14 +476,9 @@ go run test-clients/main.go
 ### Testing Concurrent Clients
 
 ```bash
-# Run multiple Go test clients simultaneously
+# Run multiple test clients simultaneously
 for i in {1..10}; do
   go run test-clients/main.go &
-done
-
-# Or with Node.js client
-for i in {1..10}; do
-  (cd test-clients && node test-client.js) &
 done
 
 # Each client will auto-generate a unique client_id
@@ -513,11 +493,8 @@ docker-compose up --build
 # In another terminal
 curl http://localhost:8080/health
 
-# Test WebSocket with Go client
+# Test WebSocket
 go run test-clients/main.go -url ws://localhost:8080
-
-# Or with Node.js client
-cd test-clients && node test-client.js ws://localhost:8080
 ```
 
 ## 🎯 Design Decisions & Assumptions

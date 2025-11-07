@@ -37,7 +37,3 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
-
-# Node modules (for test clients)
-node_modules/
-package-lock.json
