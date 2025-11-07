@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/tarunm/pubsub-system/config"
+	"github.com/tarunm/pubsub-system/internal/auth"
 	"github.com/tarunm/pubsub-system/internal/handlers"
 	"github.com/tarunm/pubsub-system/internal/pubsub"
 )
@@ -23,11 +24,19 @@ func main() {
 	log.Printf("[INFO] Configuration loaded: Port=%s, RingBuffer=%d, SubscriberQueue=%d",
 		cfg.Port, cfg.RingBufferSize, cfg.SubscriberQueue)
 
+	// Initialize authentication
+	validator := auth.NewAPIKeyValidator(cfg.APIKeys, cfg.AuthEnabled)
+	if cfg.AuthEnabled {
+		log.Printf("[INFO] Authentication enabled with %d API key(s)", len(cfg.APIKeys))
+	} else {
+		log.Println("[INFO] Authentication disabled")
+	}
+
 	// Initialize pub/sub engine with configuration
 	engine := pubsub.NewPubSubEngine(cfg)
 
 	// Initialize handlers
-	wsHandler := handlers.NewWebSocketHandler(engine, cfg)
+	wsHandler := handlers.NewWebSocketHandler(engine, cfg, validator)
 	restHandler := handlers.NewRESTHandler(engine)
 
 	// Setup Gin router
@@ -36,17 +45,11 @@ func main() {
 	router.Use(gin.Logger())
 	router.Use(gin.Recovery())
 
-	// WebSocket endpoint
-	router.GET("/ws", wsHandler.HandleWebSocket)
+	// Create auth middleware
+	authMiddleware := auth.AuthMiddleware(validator)
 
-	// REST API endpoints
-	router.POST("/topics", restHandler.CreateTopic)
-	router.DELETE("/topics/:name", restHandler.DeleteTopic)
-	router.GET("/topics", restHandler.ListTopics)
+	// Unprotected endpoints
 	router.GET("/health", restHandler.GetHealth)
-	router.GET("/stats", restHandler.GetStats)
-
-	// Root endpoint
 	router.GET("/", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"service": "PubSub System",
@@ -59,6 +62,19 @@ func main() {
 			},
 		})
 	})
+
+	// WebSocket endpoint (has built-in auth via initial message)
+	router.GET("/ws", wsHandler.HandleWebSocket)
+
+	// Protected REST API endpoints
+	protected := router.Group("/")
+	protected.Use(authMiddleware)
+	{
+		protected.POST("/topics", restHandler.CreateTopic)
+		protected.DELETE("/topics/:name", restHandler.DeleteTopic)
+		protected.GET("/topics", restHandler.ListTopics)
+		protected.GET("/stats", restHandler.GetStats)
+	}
 
 	// HTTP server configuration with timeouts from config
 	srv := &http.Server{

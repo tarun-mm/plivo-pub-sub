@@ -4,28 +4,59 @@ A high-performance, in-memory publish-subscribe system with WebSocket support an
 
 Built for **Plivo Technical Assignment** - A scalable, thread-safe pub/sub system handling real-time message delivery with backpressure handling and graceful shutdown.
 
-## 🚀 Features
+## Features
 
-- ✅ **WebSocket-based pub/sub** - Real-time bidirectional communication
-- ✅ **REST API** - Topic management (create, delete, list)
-- ✅ **Thread-safe** - Concurrent operations with RWMutex
-- ✅ **Message history** - Ring buffer with replay support (`last_n`)
-- ✅ **Backpressure handling** - Slow consumer detection with queue overflow management
-- ✅ **Graceful shutdown** - Clean connection closure and resource cleanup
-- ✅ **Health & Stats endpoints** - Observability and monitoring
-- ✅ **Heartbeat/Ping-Pong** - Connection health monitoring (30s interval)
-- ✅ **Docker support** - Containerized deployment with health checks
+- **WebSocket-based pub/sub** - Real-time bidirectional communication
+- **REST API** - Topic management (create, delete, list)
+- **Thread-safe** - Concurrent operations with RWMutex
+- **Message history** - Ring buffer with replay support (`last_n`)
+- **Backpressure handling** - Slow consumer detection with queue overflow management
+- **Graceful shutdown** - Clean connection closure and resource cleanup
+- **Health & Stats endpoints** - Observability and monitoring
+- **X-API-Key authentication** - Optional API key-based authentication for REST and WebSocket
+- **Docker support** - Containerized deployment
 
-## 📋 Table of Contents
+## Table of Contents
 
-- [Architecture](#architecture)
 - [Quick Start](#quick-start)
-- [API Documentation](#api-documentation)
+- [Architecture](#architecture)
+- [Authentication](#authentication)
 - [Testing](#testing)
 - [Design Decisions](#design-decisions)
-- [Performance](#performance)
+- [Configuration](#configuration)
+- [Project Structure](#project-structure)
 
-## 🏗️ Architecture
+## Quick Start
+
+### Run Locally
+
+```bash
+# Clone and navigate to the repository
+git clone <your-repo-url>
+cd pubsub-system
+
+# Build and run
+go build -o pubsub-server ./cmd/server
+./pubsub-server
+
+# Server starts on http://localhost:8080
+# WebSocket endpoint: ws://localhost:8080/ws
+```
+
+### Run with Docker
+
+```bash
+# Using docker-compose
+docker-compose up --build
+
+# Or with Docker directly
+docker build -t pubsub-system .
+docker run -p 8080:8080 pubsub-system
+```
+
+For detailed API contracts and message formats, see [API_DOCUMENTATION.md](API_DOCUMENTATION.md).
+
+## Architecture
 
 ### System Components
 
@@ -86,321 +117,148 @@ Built for **Plivo Technical Assignment** - A scalable, thread-safe pub/sub syste
 2. **Subscribe**: Client → WebSocket → Engine → Topic → Add Subscriber + Replay History
 3. **Unsubscribe**: Client → WebSocket → Engine → Topic → Remove Subscriber
 
-## 🏃 Quick Start
+## Authentication
 
-### Prerequisites
+The system supports optional X-API-Key authentication for both REST API and WebSocket connections.
 
-- **Go 1.21+** (for building)
-- **Docker** (optional, for containerized deployment)
-- **Node.js 18+** (optional, for test client)
+### Configuration
 
-### Option 1: Run Locally
+Authentication is disabled by default. Enable it via environment variables:
 
 ```bash
-# Clone the repository
-git clone <your-repo-url>
-cd pubsub-system
+# Enable authentication
+export AUTH_ENABLED=true
 
-# Install dependencies
-go mod download
+# Set valid API keys (comma-separated)
+export API_KEYS=dev-key-123,prod-key-456,test-key-789
 
-# Build the server
-go build -o pubsub-server ./cmd/server
-
-# Run the server
+# Run server
 ./pubsub-server
-
-# Server will start on http://localhost:8080
-# WebSocket: ws://localhost:8080/ws
 ```
 
-### Option 2: Run with Docker
+### REST API Authentication
+
+All REST endpoints except `/health` require the `X-API-Key` header when authentication is enabled:
 
 ```bash
-# Build and run with docker-compose
-docker-compose up --build
+# Without authentication (fails if AUTH_ENABLED=true)
+curl -X POST http://localhost:8080/topics \
+  -H "Content-Type: application/json" \
+  -d '{"name": "orders"}'
 
-# Or with Docker directly
-docker build -t pubsub-system .
-docker run -p 8080:8080 pubsub-system
+# With authentication
+curl -X POST http://localhost:8080/topics \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: dev-key-123" \
+  -d '{"name": "orders"}'
 ```
 
-### Option 3: Custom Port
+**Protected endpoints:**
+- `POST /topics`
+- `DELETE /topics/:name`
+- `GET /topics`
+- `GET /stats`
 
-```bash
-# Set custom port
-export PORT=9000
-./pubsub-server
+**Unprotected endpoints:**
+- `GET /health` (for monitoring)
+- `GET /` (service info)
 
-# Or with Docker
-docker run -p 9000:9000 -e PORT=9000 pubsub-system
+### WebSocket Authentication
+
+WebSocket clients must send an `auth` message as the **first message** after connecting:
+
+#### 1. Connect to WebSocket
+
+```javascript
+const ws = new WebSocket('ws://localhost:8080/ws');
 ```
 
-## 📚 API Documentation
+#### 2. Send Auth Message (First Message)
 
-### WebSocket Endpoint
+```json
+{
+  "type": "auth",
+  "api_key": "dev-key-123",
+  "request_id": "optional-uuid"
+}
+```
 
-**URL**: `ws://localhost:8080/ws?client_id=<optional-id>`
+#### 3. Receive Authentication Response
 
-If `client_id` is not provided, a unique ID will be auto-generated.
+**Success:**
+```json
+{
+  "type": "ack",
+  "request_id": "optional-uuid",
+  "status": "authenticated",
+  "ts": "2025-08-25T10:00:00Z"
+}
+```
 
-#### Client → Server Messages
+**Failure:**
+```json
+{
+  "type": "error",
+  "request_id": "optional-uuid",
+  "error": {
+    "code": "INVALID_API_KEY",
+    "message": "Invalid or expired API key"
+  },
+  "ts": "2025-08-25T10:00:00Z"
+}
+```
 
-##### 1. Subscribe to Topic
+#### 4. After Authentication
+
+Once authenticated, send normal messages (subscribe, publish, etc.):
 
 ```json
 {
   "type": "subscribe",
   "topic": "orders",
   "client_id": "client-1",
-  "last_n": 5,
-  "request_id": "550e8400-e29b-41d4-a716-446655440000"
+  "last_n": 5
 }
 ```
 
-**Fields:**
-- `type`: `"subscribe"`
-- `topic`: Topic name (required)
-- `client_id`: Client identifier (required)
-- `last_n`: Number of historical messages to replay (optional, default: 0)
-- `request_id`: Correlation ID (optional)
+### Authentication Flow
 
-##### 2. Unsubscribe from Topic
-
-```json
-{
-  "type": "unsubscribe",
-  "topic": "orders",
-  "client_id": "client-1",
-  "request_id": "340e8400-e29b-41d4-a716-446655440098"
-}
+**REST API:**
+```
+Client Request
+    ↓
+Middleware checks X-API-Key header
+    ↓
+Valid? → Process request
+Invalid/Missing? → Return 401 Unauthorized
 ```
 
-##### 3. Publish Message
-
-```json
-{
-  "type": "publish",
-  "topic": "orders",
-  "message": {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "payload": {
-      "order_id": "ORD-123",
-      "amount": 99.5,
-      "currency": "USD"
-    }
-  },
-  "request_id": "340e8400-e29b-41d4-a716-446655440098"
-}
+**WebSocket:**
+```
+Client Connects
+    ↓
+Server waits for auth message (10s timeout)
+    ↓
+Valid auth? → Allow subscribe/publish/etc.
+Invalid/Timeout? → Send error & close connection
 ```
 
-**Fields:**
-- `message.id`: Must be a valid UUID
-- `message.payload`: Any JSON value
+### Error Codes
 
-##### 4. Ping
+| Code | Description | When |
+|------|-------------|------|
+| `MISSING_API_KEY` | X-API-Key header missing | REST request without header |
+| `INVALID_API_KEY` | API key not valid | Wrong or expired key |
+| `UNAUTHORIZED` | Authentication required | First WS message not auth |
 
-```json
-{
-  "type": "ping",
-  "request_id": "570t8400-e29b-41d4-a716-446655440123"
-}
-```
+### Security Notes
 
-#### Server → Client Messages
+- **Production**: Use HTTPS/WSS to encrypt API keys in transit
+- **Key Storage**: API keys stored in environment variables
+- **Key Rotation**: Restart server to apply new keys
+- **Backward Compatible**: When `AUTH_ENABLED=false`, system works without authentication
 
-##### 1. Acknowledgment (ack)
-
-```json
-{
-  "type": "ack",
-  "request_id": "550e8400-e29b-41d4-a716-446655440000",
-  "topic": "orders",
-  "status": "ok",
-  "ts": "2025-08-25T10:00:00Z"
-}
-```
-
-##### 2. Event (published message)
-
-```json
-{
-  "type": "event",
-  "topic": "orders",
-  "message": {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "payload": {
-      "order_id": "ORD-123",
-      "amount": 99.5,
-      "currency": "USD"
-    }
-  },
-  "ts": "2025-08-25T10:01:00Z"
-}
-```
-
-##### 3. Error
-
-```json
-{
-  "type": "error",
-  "request_id": "req-67890",
-  "error": {
-    "code": "TOPIC_NOT_FOUND",
-    "message": "Topic 'orders' does not exist"
-  },
-  "ts": "2025-08-25T10:02:00Z"
-}
-```
-
-**Error Codes:**
-- `BAD_REQUEST` - Invalid message format or missing required fields
-- `TOPIC_NOT_FOUND` - Attempting to publish/subscribe to non-existent topic
-- `SLOW_CONSUMER` - Subscriber queue overflow (backpressure triggered)
-- `INTERNAL` - Unexpected server error
-
-##### 4. Pong
-
-```json
-{
-  "type": "pong",
-  "request_id": "ping-abc",
-  "ts": "2025-08-25T10:03:00Z"
-}
-```
-
-##### 5. Info (server notifications)
-
-**Heartbeat:**
-```json
-{
-  "type": "info",
-  "msg": "ping",
-  "ts": "2025-08-25T10:04:00Z"
-}
-```
-
-**Topic Deleted:**
-```json
-{
-  "type": "info",
-  "topic": "orders",
-  "msg": "topic_deleted",
-  "ts": "2025-08-25T10:05:00Z"
-}
-```
-
-### REST API Endpoints
-
-#### 1. Create Topic
-
-```http
-POST /topics
-Content-Type: application/json
-
-{
-  "name": "orders"
-}
-```
-
-**Response (201 Created):**
-```json
-{
-  "status": "created",
-  "topic": "orders"
-}
-```
-
-**Error (409 Conflict):**
-```json
-{
-  "error": "topic already exists"
-}
-```
-
-#### 2. Delete Topic
-
-```http
-DELETE /topics/orders
-```
-
-**Response (200 OK):**
-```json
-{
-  "status": "deleted",
-  "topic": "orders"
-}
-```
-
-**Note:** All subscribers will receive a `topic_deleted` notification and be unsubscribed.
-
-**Error (404 Not Found):**
-```json
-{
-  "error": "topic not found"
-}
-```
-
-#### 3. List Topics
-
-```http
-GET /topics
-```
-
-**Response (200 OK):**
-```json
-{
-  "topics": [
-    {
-      "name": "orders",
-      "subscribers": 3
-    },
-    {
-      "name": "notifications",
-      "subscribers": 1
-    }
-  ]
-}
-```
-
-#### 4. Health Check
-
-```http
-GET /health
-```
-
-**Response (200 OK):**
-```json
-{
-  "uptime_sec": 3600,
-  "topics": 2,
-  "subscribers": 5
-}
-```
-
-#### 5. Statistics
-
-```http
-GET /stats
-```
-
-**Response (200 OK):**
-```json
-{
-  "topics": {
-    "orders": {
-      "messages": 1250,
-      "subscribers": 3
-    },
-    "notifications": {
-      "messages": 42,
-      "subscribers": 1
-    }
-  }
-}
-```
-
-## 🧪 Testing
+## Testing
 
 ### Interactive Test Client
 
@@ -497,7 +355,7 @@ curl http://localhost:8080/health
 go run test-clients/main.go -url ws://localhost:8080
 ```
 
-## 🎯 Design Decisions & Assumptions
+## Design Decisions & Assumptions
 
 ### Concurrency Safety
 
@@ -568,8 +426,6 @@ go run test-clients/main.go -url ws://localhost:8080
 - Single-instance only (no horizontal scaling)
 - Suitable for real-time streaming, not message queue
 
-**Future Enhancement:** Add Redis/PostgreSQL for persistence.
-
 ### Topic Management
 
 **Approach:** Topics must be explicitly created via REST API before use.
@@ -582,76 +438,26 @@ go run test-clients/main.go -url ws://localhost:8080
 
 ### Authentication
 
-**Assumption:** Not implemented (demo/assignment scope).
+**Implementation:** X-API-Key based authentication (optional).
 
-**Future Enhancement:** Add X-API-Key for REST, JWT for WebSocket.
+**Approach:**
+- REST API: `X-API-Key` header validation via Gin middleware
+- WebSocket: Initial `auth` message required before any operations
+- Feature flag: `AUTH_ENABLED` (default: false)
 
-## ⚡ Performance Characteristics
+**Rationale:**
+- Simple but effective for API authentication
+- Industry standard for high-scale WebSocket systems (Slack, Discord, Pusher)
+- Initial message approach prevents API keys in URLs/logs
+- Backward compatible: disabled by default
+- Multiple API keys supported for different clients/environments
 
-### Benchmarks (on MacBook Pro M1, 16GB RAM)
+**Trade-offs:**
+- API keys stored in environment variables (acceptable for demo/assignment)
+- Server restart required for key rotation
+- No key expiration (could add JWT for production)
 
-| Metric | Value |
-|--------|-------|
-| Concurrent Connections | 10,000+ |
-| Message Throughput | 50,000+ msg/sec |
-| Latency (fan-out) | < 1ms |
-| Memory per Subscriber | ~1KB |
-| Memory per Message (history) | ~500B |
-
-### Resource Usage
-
-- **Idle Server**: ~10MB RAM
-- **1,000 Clients**: ~50MB RAM
-- **10,000 Clients**: ~200MB RAM
-
-### Scalability Limits
-
-**Single Instance:**
-- Max WebSocket connections: ~10,000 (OS file descriptor limits)
-- Max throughput: ~100,000 msg/sec (CPU bound)
-- Max topics: Unlimited (memory bound)
-
-**Bottlenecks:**
-- Fan-out to many subscribers (CPU)
-- WebSocket write serialization (goroutine overhead)
-
-**Future Scaling:**
-- Horizontal scaling with Redis pub/sub
-- Message broker (Kafka/NATS) for persistence
-- Load balancer for WebSocket connections
-
-## 🔍 Monitoring & Observability
-
-### Logs
-
-All operations are logged with structured format:
-
-```
-[INFO] Client connected: client-abc123
-[INFO] Client client-abc123 subscribed to topic orders
-[INFO] Message published to topic orders: id=550e8400...
-[WARN] Slow consumer detected: client_id=client-xyz
-[ERROR] WebSocket error for client client-abc123: connection reset
-```
-
-### Metrics Endpoint
-
-`GET /stats` provides:
-- Message count per topic
-- Subscriber count per topic
-
-**Future Enhancement:** Prometheus metrics endpoint.
-
-### Health Checks
-
-`GET /health` for:
-- Uptime
-- Active topics
-- Active subscribers
-
-Used by Docker health checks and load balancers.
-
-## 🐳 Docker Deployment
+## Docker Deployment
 
 ### Build Image
 
@@ -690,7 +496,7 @@ Docker includes automatic health checks every 30 seconds:
 docker ps  # Check STATUS column for health
 ```
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 pubsub-system/
@@ -720,192 +526,38 @@ pubsub-system/
 └── README.md                    # This file
 ```
 
-## 🚀 Future Enhancements
-
-- [ ] **Persistence**: Redis/PostgreSQL for message history
-- [ ] **Authentication**: JWT for WebSocket, API keys for REST
-- [ ] **Authorization**: Per-topic access control
-- [ ] **Horizontal Scaling**: Multi-instance with Redis pub/sub
-- [ ] **Message Filtering**: Subscribe with payload filters
-- [ ] **Dead Letter Queue**: Failed message handling
-- [ ] **Rate Limiting**: Per-client rate limits
-- [ ] **Compression**: WebSocket message compression
-- [ ] **Metrics**: Prometheus exporter
-- [ ] **Admin Dashboard**: Web UI for monitoring
-- [ ] **Message TTL**: Auto-expire old messages
-- [ ] **Wildcards**: Subscribe to multiple topics (e.g., `orders.*`)
-
-## 📝 Configuration
-
-The system is fully configurable through environment variables, allowing easy adaptation for different deployment scenarios without code changes.
+## Configuration
 
 ### Environment Variables
 
-All configuration can be set via environment variables. See `.env.example` for a complete reference.
-
-#### Server Configuration
+Key configuration parameters (see `.env.example` for complete reference):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `8080` | HTTP server port |
 | `GIN_MODE` | `release` | Gin mode: `debug` or `release` |
+| `RING_BUFFER_SIZE` | `100` | Messages stored per topic for replay |
+| `SUBSCRIBER_QUEUE_SIZE` | `100` | Buffer size per subscriber (backpressure threshold) |
+| `PING_PERIOD_SEC` | `30` | Heartbeat ping interval |
+| `PONG_WAIT_SEC` | `60` | Max wait for pong response |
+| `WRITE_WAIT_SEC` | `10` | Max time to write message |
+| `SHUTDOWN_TIMEOUT_SEC` | `10` | Graceful shutdown timeout |
+| `AUTH_ENABLED` | `false` | Enable X-API-Key authentication |
+| `API_KEYS` | (empty) | Comma-separated list of valid API keys |
 
-#### PubSub Configuration
+### Usage
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `RING_BUFFER_SIZE` | `100` | Number of messages stored per topic for replay (`last_n` feature) |
-| `SUBSCRIBER_QUEUE_SIZE` | `100` | Buffer size for each subscriber's message queue (backpressure threshold) |
-
-#### WebSocket Configuration (in seconds)
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PING_PERIOD_SEC` | `30` | How often to send heartbeat pings to clients |
-| `PONG_WAIT_SEC` | `60` | Maximum time to wait for pong response before disconnecting |
-| `WRITE_WAIT_SEC` | `10` | Maximum time allowed to write a message to the client |
-
-#### HTTP Timeouts (in seconds)
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `READ_TIMEOUT_SEC` | `15` | HTTP read timeout |
-| `WRITE_TIMEOUT_SEC` | `15` | HTTP write timeout |
-| `IDLE_TIMEOUT_SEC` | `60` | HTTP idle connection timeout |
-
-#### Shutdown Configuration
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SHUTDOWN_TIMEOUT_SEC` | `10` | Maximum time to wait for graceful shutdown |
-
-### Configuration Scenarios
-
-#### Development Environment
 ```bash
-export GIN_MODE=debug
-export PING_PERIOD_SEC=10
-export PONG_WAIT_SEC=30
-export RING_BUFFER_SIZE=50
-
+# Local
+export PORT=9000
+export RING_BUFFER_SIZE=200
 ./pubsub-server
+
+# Docker
+docker run -p 8080:8080 -e PORT=8080 -e RING_BUFFER_SIZE=200 pubsub-system
 ```
 
-**Use case:** Faster feedback, verbose logging, shorter timeouts for quick iteration.
-
-#### Production Environment (Default)
-```bash
-export GIN_MODE=release
-export RING_BUFFER_SIZE=100
-export SUBSCRIBER_QUEUE_SIZE=100
-export PING_PERIOD_SEC=30
-
-./pubsub-server
-```
-
-**Use case:** Optimal balance between performance and reliability.
-
-#### High-Traffic Environment
-```bash
-export RING_BUFFER_SIZE=500
-export SUBSCRIBER_QUEUE_SIZE=500
-export PING_PERIOD_SEC=60
-export PONG_WAIT_SEC=120
-
-./pubsub-server
-```
-
-**Use case:** Handle many subscribers and high message throughput with larger buffers.
-
-#### Load Testing Environment
-```bash
-export RING_BUFFER_SIZE=10
-export SUBSCRIBER_QUEUE_SIZE=50
-export SHUTDOWN_TIMEOUT_SEC=30
-export WRITE_WAIT_SEC=5
-
-./pubsub-server
-```
-
-**Use case:** Minimal memory footprint for testing connection limits and backpressure behavior.
-
-#### Real-Time / Low-Latency Environment
-```bash
-export SUBSCRIBER_QUEUE_SIZE=50
-export WRITE_WAIT_SEC=5
-export PING_PERIOD_SEC=15
-export PONG_WAIT_SEC=30
-
-./pubsub-server
-```
-
-**Use case:** Prioritize low latency over buffering, with aggressive timeout detection.
-
-### Docker Configuration
-
-Pass environment variables to Docker:
-
-```bash
-docker run -p 8080:8080 \
-  -e PORT=8080 \
-  -e RING_BUFFER_SIZE=200 \
-  -e SUBSCRIBER_QUEUE_SIZE=200 \
-  -e PING_PERIOD_SEC=30 \
-  pubsub-system
-```
-
-Or use `docker-compose` with an `.env` file:
-
-```yaml
-# docker-compose.yml
-services:
-  pubsub:
-    build: .
-    ports:
-      - "8080:8080"
-    env_file:
-      - .env
-```
-
-### Configuration Best Practices
-
-1. **Ring Buffer Size**: Set based on expected late-joiner replay needs
-   - Small (10-50): Minimal memory, short history
-   - Medium (100-200): Good balance (default)
-   - Large (500-1000): Full session replay capability
-
-2. **Subscriber Queue Size**: Determines backpressure sensitivity
-   - Small (50): Aggressive slow consumer detection
-   - Medium (100-200): Balanced (default)
-   - Large (500+): Very tolerant of network hiccups
-
-3. **Ping Period**: Balance between connection health and overhead
-   - Short (10-15s): Faster disconnect detection, more traffic
-   - Medium (30s): Good balance (default)
-   - Long (60s): Less overhead, slower disconnect detection
-
-4. **Timeouts**: Adjust based on network conditions
-   - Development/LAN: Use shorter timeouts
-   - Production/WAN: Use longer timeouts
-   - Mobile networks: Increase pong_wait significantly
-
-### Monitoring Configuration Impact
-
-Watch logs for configuration effectiveness:
-
-```bash
-# See config values at startup
-./pubsub-server
-# [INFO] Configuration loaded: Port=8080, RingBuffer=100, SubscriberQueue=100
-
-# Monitor slow consumers (indicates queue size may need increase)
-# [WARN] Slow consumer detected: client_id=client-xyz
-
-# Monitor topic creation
-# [INFO] Topic created: orders (buffer size: 100)
-```
-
-## 🧪 Race Condition Testing
+## Race Condition Testing
 
 ```bash
 # Build and run with race detector
@@ -918,22 +570,16 @@ go build -race -o pubsub-server ./cmd/server
 
 No race conditions detected with 1000+ concurrent clients.
 
-## 📄 License
+## License
 
-MIT License - See LICENSE file for details.
+MIT License
 
-## 👤 Author
+## Author
 
-**Tarun M**
+**Tarun M** - Assignment for Plivo Software Engineering Position
 
-Assignment for Plivo Software Engineering Position
-
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - Go WebSocket library: [gorilla/websocket](https://github.com/gorilla/websocket)
 - HTTP router: [gin-gonic/gin](https://github.com/gin-gonic/gin)
 - UUID generation: [google/uuid](https://github.com/google/uuid)
-
----
-
-**Built with ❤️ using Go 1.21+ and modern concurrency patterns**

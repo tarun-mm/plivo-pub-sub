@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/tarunm/pubsub-system/internal/auth"
 	"github.com/tarunm/pubsub-system/internal/models"
 	"github.com/tarunm/pubsub-system/internal/pubsub"
 )
@@ -31,15 +32,17 @@ type WebSocketConfig interface {
 
 // WebSocketHandler handles WebSocket connections
 type WebSocketHandler struct {
-	engine *pubsub.PubSubEngine
-	config WebSocketConfig
+	engine    *pubsub.PubSubEngine
+	config    WebSocketConfig
+	validator *auth.APIKeyValidator
 }
 
 // NewWebSocketHandler creates a new WebSocket handler
-func NewWebSocketHandler(engine *pubsub.PubSubEngine, config WebSocketConfig) *WebSocketHandler {
+func NewWebSocketHandler(engine *pubsub.PubSubEngine, config WebSocketConfig, validator *auth.APIKeyValidator) *WebSocketHandler {
 	return &WebSocketHandler{
-		engine: engine,
-		config: config,
+		engine:    engine,
+		config:    config,
+		validator: validator,
 	}
 }
 
@@ -97,6 +100,59 @@ func (h *WebSocketHandler) readPump(sub *pubsub.Subscriber) {
 		return nil
 	})
 
+	// If auth is enabled, wait for auth message with timeout
+	if h.validator.IsEnabled() {
+		authTimeout := time.NewTimer(10 * time.Second)
+		defer authTimeout.Stop()
+
+		authChan := make(chan bool, 1)
+
+		go func() {
+			var msg models.ClientMessage
+			err := sub.Conn.ReadJSON(&msg)
+			if err != nil {
+				authChan <- false
+				return
+			}
+
+			if msg.Type != "auth" {
+				h.sendError(sub, msg.RequestID, auth.ErrCodeUnauthorized, "Authentication required. First message must be of type 'auth'")
+				authChan <- false
+				return
+			}
+
+			if !h.validator.ValidateKey(msg.APIKey) {
+				h.sendError(sub, msg.RequestID, auth.ErrCodeInvalidAPIKey, auth.ErrMsgInvalidAPIKey)
+				authChan <- false
+				return
+			}
+
+			// Send success ack
+			sub.SendMessage(models.ServerMessage{
+				Type:      "ack",
+				RequestID: msg.RequestID,
+				Status:    "authenticated",
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
+			})
+			log.Printf("[INFO] Client %s authenticated successfully", sub.ClientID)
+			authChan <- true
+		}()
+
+		select {
+		case success := <-authChan:
+			if !success {
+				log.Printf("[WARN] Client %s authentication failed", sub.ClientID)
+				return
+			}
+			// Authentication successful, proceed to main loop
+		case <-authTimeout.C:
+			h.sendError(sub, "", auth.ErrCodeUnauthorized, "Authentication timeout")
+			log.Printf("[WARN] Client %s authentication timeout", sub.ClientID)
+			return
+		}
+	}
+
+	// Main message loop (only reachable if authenticated)
 	for {
 		var msg models.ClientMessage
 		err := sub.Conn.ReadJSON(&msg)
@@ -109,6 +165,12 @@ func (h *WebSocketHandler) readPump(sub *pubsub.Subscriber) {
 
 		// Reset read deadline on any message received (proves connection is alive)
 		sub.Conn.SetReadDeadline(time.Now().Add(h.config.GetPongWait()))
+
+		// Reject auth messages after initial authentication
+		if msg.Type == "auth" {
+			h.sendError(sub, msg.RequestID, "BAD_REQUEST", "Already authenticated")
+			continue
+		}
 
 		log.Printf("[DEBUG] Received message from client %s: type=%s, topic=%s", sub.ClientID, msg.Type, msg.Topic)
 		h.handleMessage(sub, msg)

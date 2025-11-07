@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -26,6 +27,10 @@ type Config struct {
 
 	// Shutdown Configuration
 	ShutdownTimeout time.Duration // Max time to wait for graceful shutdown
+
+	// Authentication Configuration
+	AuthEnabled bool     // Enable/disable API key authentication
+	APIKeys     []string // Valid API keys for authentication
 }
 
 // LoadConfig loads configuration from environment variables with defaults
@@ -52,6 +57,10 @@ func LoadConfig() *Config {
 
 		// Shutdown
 		ShutdownTimeout: getEnvDuration("SHUTDOWN_TIMEOUT_SEC", 10) * time.Second,
+
+		// Authentication
+		AuthEnabled: getEnvBool("AUTH_ENABLED", true),
+		APIKeys:     getEnvSlice("API_KEYS", []string{"test-api-key"}),
 	}
 }
 
@@ -101,4 +110,31 @@ func (c *Config) GetPongWait() time.Duration {
 // GetWriteWait returns the write wait duration
 func (c *Config) GetWriteWait() time.Duration {
 	return c.WriteWait
+}
+
+// getEnvBool retrieves boolean environment variable or returns default
+func getEnvBool(key string, defaultValue bool) bool {
+	if value := os.Getenv(key); value != "" {
+		if boolValue, err := strconv.ParseBool(value); err == nil {
+			return boolValue
+		}
+	}
+	return defaultValue
+}
+
+// getEnvSlice retrieves comma-separated string environment variable and returns as slice
+func getEnvSlice(key string, defaultValue []string) []string {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }

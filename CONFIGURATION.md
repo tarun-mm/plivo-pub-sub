@@ -31,7 +31,7 @@ WRITE_WAIT_SEC=10                # Max write timeout
 # HTTP Timeouts (seconds)
 READ_TIMEOUT_SEC=15
 WRITE_TIMEOUT_SEC=15
-IDLE_TIMEOUT_SEC=60
+IDLE_TIMEOUT_SEC=0                   # 0 = disabled for WebSocket support
 
 # Shutdown (seconds)
 SHUTDOWN_TIMEOUT_SEC=10          # Graceful shutdown timeout

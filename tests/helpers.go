@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/tarunm/pubsub-system/config"
+	"github.com/tarunm/pubsub-system/internal/auth"
 	"github.com/tarunm/pubsub-system/internal/handlers"
 	"github.com/tarunm/pubsub-system/internal/models"
 	"github.com/tarunm/pubsub-system/internal/pubsub"
@@ -53,9 +54,10 @@ func SetupTestServer(t *testing.T) (*TestServer, func()) {
 		ShutdownTimeout: 5 * time.Second,
 	}
 
-	// Initialize engine and handlers
+	// Initialize engine and handlers (no auth for backward compatibility)
 	engine := pubsub.NewPubSubEngine(cfg)
-	wsHandler := handlers.NewWebSocketHandler(engine, cfg)
+	validator := auth.NewAPIKeyValidator([]string{}, false)
+	wsHandler := handlers.NewWebSocketHandler(engine, cfg, validator)
 	restHandler := handlers.NewRESTHandler(engine)
 
 	// Setup router
@@ -69,6 +71,114 @@ func SetupTestServer(t *testing.T) (*TestServer, func()) {
 	router.GET("/topics", restHandler.ListTopics)
 	router.GET("/health", restHandler.GetHealth)
 	router.GET("/stats", restHandler.GetStats)
+
+	// Create server
+	srv := &http.Server{
+		Addr:    fmt.Sprintf("127.0.0.1:%d", port),
+		Handler: router,
+	}
+
+	// Start server
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			t.Logf("Server error: %v", err)
+		}
+	}()
+
+	// Wait for server to be ready
+	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	wsURL := fmt.Sprintf("ws://127.0.0.1:%d", port)
+
+	retries := 10
+	for i := 0; i < retries; i++ {
+		resp, err := http.Get(baseURL + "/health")
+		if err == nil {
+			resp.Body.Close()
+			break
+		}
+		if i == retries-1 {
+			t.Fatalf("Server failed to start: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	testServer := &TestServer{
+		URL:    baseURL,
+		WSURL:  wsURL,
+		server: srv,
+		engine: engine,
+	}
+
+	// Cleanup function
+	cleanup := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		engine.Shutdown()
+		srv.Shutdown(ctx)
+	}
+
+	return testServer, cleanup
+}
+
+// SetupTestServerWithAuth creates and starts a test server with authentication support
+func SetupTestServerWithAuth(t *testing.T, authEnabled bool, apiKeys []string) (*TestServer, func()) {
+	t.Helper()
+
+	// Find available port
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to find available port: %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	listener.Close()
+
+	// Create test configuration
+	cfg := &config.Config{
+		Port:            fmt.Sprintf("%d", port),
+		GinMode:         "release",
+		RingBufferSize:  100,
+		SubscriberQueue: 100,
+		PingPeriod:      30 * time.Second,
+		PongWait:        60 * time.Second,
+		WriteWait:       10 * time.Second,
+		ReadTimeout:     15 * time.Second,
+		WriteTimeout:    15 * time.Second,
+		IdleTimeout:     0,
+		ShutdownTimeout: 5 * time.Second,
+		AuthEnabled:     authEnabled,
+		APIKeys:         apiKeys,
+	}
+
+	// Initialize authentication
+	validator := auth.NewAPIKeyValidator(apiKeys, authEnabled)
+
+	// Initialize engine and handlers
+	engine := pubsub.NewPubSubEngine(cfg)
+	wsHandler := handlers.NewWebSocketHandler(engine, cfg, validator)
+	restHandler := handlers.NewRESTHandler(engine)
+
+	// Setup router
+	gin.SetMode(gin.ReleaseMode)
+	router := gin.New()
+
+	// Create auth middleware
+	authMiddleware := auth.AuthMiddleware(validator)
+
+	// Unprotected endpoints
+	router.GET("/health", restHandler.GetHealth)
+
+	// WebSocket endpoint (has built-in auth)
+	router.GET("/ws", wsHandler.HandleWebSocket)
+
+	// Protected REST API endpoints
+	protected := router.Group("/")
+	protected.Use(authMiddleware)
+	{
+		protected.POST("/topics", restHandler.CreateTopic)
+		protected.DELETE("/topics/:name", restHandler.DeleteTopic)
+		protected.GET("/topics", restHandler.ListTopics)
+		protected.GET("/stats", restHandler.GetStats)
+	}
 
 	// Create server
 	srv := &http.Server{

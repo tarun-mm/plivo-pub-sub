@@ -11,12 +11,13 @@ type Message struct {
 
 // ClientMessage represents messages from client to server
 type ClientMessage struct {
-	Type      string   `json:"type"` // subscribe, unsubscribe, publish, ping
+	Type      string   `json:"type"` // subscribe, unsubscribe, publish, ping, auth
 	Topic     string   `json:"topic,omitempty"`
 	Message   *Message `json:"message,omitempty"`
 	ClientID  string   `json:"client_id,omitempty"`
 	LastN     int      `json:"last_n,omitempty"`
 	RequestID string   `json:"request_id,omitempty"`
+	APIKey    string   `json:"api_key,omitempty"` // For authentication
 }
 
 // ServerMessage represents messages from server to client
