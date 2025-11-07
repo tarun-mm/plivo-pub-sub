@@ -25,6 +25,7 @@ type ClientMessage struct {
 	Message   *MessageData `json:"message,omitempty"`
 	LastN     int          `json:"last_n,omitempty"`
 	RequestID string       `json:"request_id,omitempty"`
+	APIKey    string       `json:"api_key,omitempty"`
 }
 
 type MessageData struct {
@@ -72,6 +73,7 @@ type TestClient struct {
 func main() {
 	serverURL := flag.String("url", "ws://localhost:8080", "WebSocket server URL")
 	clientID := flag.String("client", "", "Client ID (auto-generated if not provided)")
+	apiKey := flag.String("key", "test-api-key", "API key for authentication")
 	flag.Parse()
 
 	// Generate client ID if not provided
@@ -98,6 +100,20 @@ func main() {
 		done:       make(chan struct{}),
 		showPrompt: make(chan bool, 1),
 	}
+
+	// Send authentication message first
+	fmt.Printf("%s%sAuthenticating...%s\n", ColorYellow, ColorBold, ColorReset)
+	authMsg := ClientMessage{
+		Type:      "auth",
+		APIKey:    *apiKey,
+		RequestID: uuid.New().String(),
+	}
+	if err := client.sendMessageSync(authMsg); err != nil {
+		log.Fatalf("%sAuthentication failed: %v%s\n", ColorRed, err, ColorReset)
+	}
+
+	// Wait a bit for auth response
+	time.Sleep(100 * time.Millisecond)
 
 	// Start message reader goroutine
 	go client.readMessages()
@@ -365,6 +381,21 @@ func (c *TestClient) sendMessage(msg ClientMessage) {
 	}
 }
 
+func (c *TestClient) sendMessageSync(msg ClientMessage) error {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("error marshaling message: %w", err)
+	}
+
+	fmt.Printf("%s>> Sending: %s%s\n", ColorBlue, string(data), ColorReset)
+
+	err = c.conn.WriteMessage(websocket.TextMessage, data)
+	if err != nil {
+		return fmt.Errorf("error sending message: %w", err)
+	}
+	return nil
+}
+
 func (c *TestClient) printServerMessage(msg ServerMessage) {
 	timestamp := msg.Timestamp
 	if t, err := time.Parse(time.RFC3339, msg.Timestamp); err == nil {
@@ -373,7 +404,11 @@ func (c *TestClient) printServerMessage(msg ServerMessage) {
 
 	switch msg.Type {
 	case "ack":
-		fmt.Printf("%s<< [%s] ACK:%s %s - %s\n", ColorGreen, timestamp, ColorReset, msg.Topic, msg.Status)
+		if msg.Status == "authenticated" {
+			fmt.Printf("%s<< [%s] ACK:%s %s ✓\n", ColorGreen, timestamp, ColorReset, msg.Status)
+		} else {
+			fmt.Printf("%s<< [%s] ACK:%s %s - %s\n", ColorGreen, timestamp, ColorReset, msg.Topic, msg.Status)
+		}
 
 	case "event":
 		fmt.Printf("%s<< [%s] EVENT:%s topic=%s\n", ColorCyan, timestamp, ColorReset, msg.Topic)

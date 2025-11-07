@@ -59,8 +59,8 @@ func LoadConfig() *Config {
 		ShutdownTimeout: getEnvDuration("SHUTDOWN_TIMEOUT_SEC", 10) * time.Second,
 
 		// Authentication
-		AuthEnabled: getEnvBool("AUTH_ENABLED", false),
-		APIKeys:     getEnvSlice("API_KEYS", []string{}),
+		AuthEnabled: getEnvBool("AUTH_ENABLED", true),
+		APIKeys:     getEnvSlice("API_KEYS", []string{"test-api-key"}),
 	}
 }
 
