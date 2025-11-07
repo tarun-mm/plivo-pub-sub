@@ -61,6 +61,15 @@ func NewSubscriberWithConfig(clientID string, conn *websocket.Conn, queueSize in
 // SendMessage sends a message to the subscriber
 // Implements backpressure handling: drops oldest message if queue is full
 func (s *Subscriber) SendMessage(msg models.ServerMessage) {
+	// Use defer to ensure we handle closed state properly
+	defer func() {
+		// Recover from any panic caused by sending on closed channel
+		if r := recover(); r != nil {
+			log.Printf("[DEBUG] SendMessage recovered from panic for client %s (likely closed)", s.ClientID)
+		}
+	}()
+
+	// Check if closed
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -72,6 +81,14 @@ func (s *Subscriber) SendMessage(msg models.ServerMessage) {
 	case s.MessageChan <- msg:
 		// Message queued successfully
 	default:
+		// Check again if closed before backpressure handling
+		s.mu.Lock()
+		if s.closed {
+			s.mu.Unlock()
+			return
+		}
+		s.mu.Unlock()
+
 		// Queue full - implement backpressure policy
 		log.Printf("[WARN] Slow consumer detected: client_id=%s, dropping oldest message", s.ClientID)
 
@@ -166,7 +183,9 @@ func (s *Subscriber) GetTopics() []string {
 	return topics
 }
 
-// Close closes the subscriber's connection and message channel
+// Close closes the subscriber's connection
+// Note: We don't close MessageChan to avoid races with concurrent SendMessage calls
+// The channel will be garbage collected when the subscriber is no longer referenced
 func (s *Subscriber) Close() {
 	s.mu.Lock()
 	if s.closed {
@@ -176,7 +195,8 @@ func (s *Subscriber) Close() {
 	s.closed = true
 	s.mu.Unlock()
 
-	close(s.MessageChan)
+	// Close the websocket connection
+	// This will cause WritePump to exit naturally
 	s.Conn.Close()
 }
 
