@@ -107,6 +107,9 @@ func (h *WebSocketHandler) readPump(sub *pubsub.Subscriber) {
 			break
 		}
 
+		// Reset read deadline on any message received (proves connection is alive)
+		sub.Conn.SetReadDeadline(time.Now().Add(h.config.GetPongWait()))
+
 		log.Printf("[DEBUG] Received message from client %s: type=%s, topic=%s", sub.ClientID, msg.Type, msg.Topic)
 		h.handleMessage(sub, msg)
 	}

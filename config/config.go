@@ -48,7 +48,7 @@ func LoadConfig() *Config {
 		// HTTP Timeouts
 		ReadTimeout:  getEnvDuration("READ_TIMEOUT_SEC", 15) * time.Second,
 		WriteTimeout: getEnvDuration("WRITE_TIMEOUT_SEC", 15) * time.Second,
-		IdleTimeout:  getEnvDuration("IDLE_TIMEOUT_SEC", 60) * time.Second,
+		IdleTimeout:  getEnvDuration("IDLE_TIMEOUT_SEC", 0) * time.Second, // 0 = no timeout for WebSocket connections
 
 		// Shutdown
 		ShutdownTimeout: getEnvDuration("SHUTDOWN_TIMEOUT_SEC", 10) * time.Second,

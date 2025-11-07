@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -38,6 +39,7 @@ type ServerMessage struct {
 	Status    string       `json:"status,omitempty"`
 	Message   *MessageData `json:"message,omitempty"`
 	Error     *ErrorInfo   `json:"error,omitempty"`
+	Msg       string       `json:"msg,omitempty"`
 	Timestamp string       `json:"ts"`
 }
 
@@ -60,9 +62,11 @@ const (
 )
 
 type TestClient struct {
-	conn     *websocket.Conn
-	clientID string
-	done     chan struct{}
+	conn       *websocket.Conn
+	clientID   string
+	done       chan struct{}
+	closeOnce  sync.Once
+	showPrompt chan bool
 }
 
 func main() {
@@ -89,9 +93,10 @@ func main() {
 	fmt.Printf("%sClient ID: %s%s\n\n", ColorCyan, *clientID, ColorReset)
 
 	client := &TestClient{
-		conn:     conn,
-		clientID: *clientID,
-		done:     make(chan struct{}),
+		conn:       conn,
+		clientID:   *clientID,
+		done:       make(chan struct{}),
+		showPrompt: make(chan bool, 1),
 	}
 
 	// Start message reader goroutine
@@ -106,36 +111,78 @@ func main() {
 
 	// Read commands from stdin
 	scanner := bufio.NewScanner(os.Stdin)
-	fmt.Print(ColorGreen + "> " + ColorReset)
 
+	// Input handler goroutine
 	go func() {
-		for scanner.Scan() {
-			input := strings.TrimSpace(scanner.Text())
-			if input != "" {
-				client.handleCommand(input)
+		fmt.Print(ColorGreen + "> " + ColorReset)
+		for {
+			select {
+			case <-client.done:
+				return
+			case <-client.showPrompt:
+				fmt.Print(ColorGreen + "> " + ColorReset)
+			default:
+				if scanner.Scan() {
+					input := strings.TrimSpace(scanner.Text())
+					if input != "" {
+						client.handleCommand(input)
+					}
+					// Show prompt after handling command
+					select {
+					case <-client.done:
+						return
+					default:
+						fmt.Print(ColorGreen + "> " + ColorReset)
+					}
+				} else {
+					// Scanner error or EOF
+					if err := scanner.Err(); err != nil {
+						log.Printf("Scanner error: %v", err)
+					}
+					client.close()
+					return
+				}
 			}
-			fmt.Print(ColorGreen + "> " + ColorReset)
 		}
-		close(client.done)
 	}()
 
 	// Wait for interrupt or done signal
 	select {
 	case <-interrupt:
 		fmt.Printf("\n%sReceived interrupt signal, closing connection...%s\n", ColorYellow, ColorReset)
+		client.close()
 	case <-client.done:
 		fmt.Printf("\n%sExiting...%s\n", ColorYellow, ColorReset)
 	}
 
-	// Clean close
-	err = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-	if err != nil {
-		log.Printf("Close error: %v", err)
-	}
-	time.Sleep(100 * time.Millisecond)
+	// Give time for graceful close
+	time.Sleep(200 * time.Millisecond)
+}
+
+// close safely closes the connection and done channel
+func (c *TestClient) close() {
+	c.closeOnce.Do(func() {
+		// Send close message
+		err := c.conn.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+		if err != nil {
+			log.Printf("Close message error: %v", err)
+		}
+
+		// Close the connection
+		c.conn.Close()
+
+		// Signal done
+		close(c.done)
+	})
 }
 
 func (c *TestClient) readMessages() {
+	defer func() {
+		// Close connection if readMessages exits
+		c.close()
+	}()
+
 	// Set up ping/pong handlers to keep connection alive
 	pongWait := 60 * time.Second
 	c.conn.SetReadDeadline(time.Now().Add(pongWait))
@@ -150,20 +197,38 @@ func (c *TestClient) readMessages() {
 	c.conn.SetPingHandler(func(appData string) error {
 		err := c.conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(10*time.Second))
 		if err != nil {
-			log.Printf("%sError sending pong: %v%s\n", ColorRed, err, ColorReset)
+			// Connection might be closing, don't log if done
+			select {
+			case <-c.done:
+				return nil
+			default:
+				log.Printf("%sError sending pong: %v%s\n", ColorRed, err, ColorReset)
+			}
 		}
 		c.conn.SetReadDeadline(time.Now().Add(pongWait))
 		return nil
 	})
 
 	for {
+		select {
+		case <-c.done:
+			return
+		default:
+		}
+
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
-				log.Printf("%sConnection error: %v%s\n", ColorRed, err, ColorReset)
+			// Check if this is expected close
+			select {
+			case <-c.done:
+				// Already closing, no need to log
+				return
+			default:
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
+					log.Printf("%sConnection error: %v%s\n", ColorRed, err, ColorReset)
+				}
+				return
 			}
-			close(c.done)
-			return
 		}
 
 		var serverMsg ServerMessage
@@ -173,6 +238,12 @@ func (c *TestClient) readMessages() {
 		}
 
 		c.printServerMessage(serverMsg)
+
+		// Show prompt after server message
+		select {
+		case c.showPrompt <- true:
+		default:
+		}
 	}
 }
 
@@ -196,7 +267,7 @@ func (c *TestClient) handleCommand(input string) {
 	case "help", "?":
 		printHelp()
 	case "quit", "exit":
-		close(c.done)
+		c.close()
 	default:
 		fmt.Printf("%sUnknown command: %s%s\n", ColorRed, cmd, ColorReset)
 		fmt.Printf("%sType 'help' for available commands%s\n", ColorDim, ColorReset)
@@ -318,7 +389,11 @@ func (c *TestClient) printServerMessage(msg ServerMessage) {
 		fmt.Printf("%s<< [%s] PONG%s\n", ColorMagenta, timestamp, ColorReset)
 
 	case "info":
-		fmt.Printf("%s<< [%s] INFO:%s %s\n", ColorYellow, timestamp, ColorReset, msg.Topic)
+		info := msg.Msg
+		if msg.Topic != "" {
+			info = fmt.Sprintf("%s (topic: %s)", msg.Msg, msg.Topic)
+		}
+		fmt.Printf("%s<< [%s] INFO:%s %s\n", ColorYellow, timestamp, ColorReset, info)
 
 	default:
 		data, _ := json.MarshalIndent(msg, "", "  ")

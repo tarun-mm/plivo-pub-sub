@@ -130,14 +130,9 @@ func (s *Subscriber) WritePump() {
 			}
 
 		case <-ticker.C:
-			// Send heartbeat
+			// Send WebSocket ping frame (not a JSON message)
 			s.Conn.SetWriteDeadline(time.Now().Add(s.writeWait))
-			heartbeat := models.ServerMessage{
-				Type:      "info",
-				Msg:       "ping",
-				Timestamp: time.Now().UTC().Format(time.RFC3339),
-			}
-			if err := s.Conn.WriteJSON(heartbeat); err != nil {
+			if err := s.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				log.Printf("[ERROR] Heartbeat error for client %s: %v", s.ClientID, err)
 				return
 			}
