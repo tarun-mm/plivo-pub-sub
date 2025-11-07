@@ -5,6 +5,7 @@
 *.so
 *.dylib
 pubsub-server
+pubsub-server-race
 test-clients/pubsub-client
 
 # Test binary
