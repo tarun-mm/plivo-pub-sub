@@ -1,0 +1,37 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+*.md
+
+# Test files
+*_test.go
+test-client.js
+test-client.py
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Build artifacts
+pubsub-server
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Environment
+.env
+.env.local
+
+# Docker
+.dockerignore
+Dockerfile
+docker-compose.yml
+
+# Misc
+*.log
+tmp/
