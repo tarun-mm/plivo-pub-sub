@@ -35,6 +35,10 @@ IDLE_TIMEOUT_SEC=0                   # 0 = disabled for WebSocket support
 
 # Shutdown (seconds)
 SHUTDOWN_TIMEOUT_SEC=10          # Graceful shutdown timeout
+
+# Authentication (optional)
+AUTH_ENABLED=false               # Enable X-API-Key authentication
+API_KEYS=                        # Comma-separated API keys (e.g., key1,key2,key3)
 ```
 
 ## Pre-configured Scenarios
@@ -94,6 +98,22 @@ WRITE_WAIT_SEC=5
 SHUTDOWN_TIMEOUT_SEC=30
 EOF
 ```
+
+### 🔐 With Authentication
+```bash
+cat > .env << EOF
+AUTH_ENABLED=true
+API_KEYS=dev-key-123,prod-key-456,test-key-789
+GIN_MODE=release
+PORT=8080
+RING_BUFFER_SIZE=100
+SUBSCRIBER_QUEUE_SIZE=100
+EOF
+```
+
+**Usage:**
+- REST API: Add `X-API-Key` header to all requests
+- WebSocket: Send `{"type":"auth","api_key":"dev-key-123"}` as first message
 
 ## Configuration Impact
 

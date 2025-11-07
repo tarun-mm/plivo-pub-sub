@@ -1,5 +1,81 @@
 # API Documentation
 
+## Authentication
+
+The system supports optional X-API-Key authentication for both REST and WebSocket endpoints.
+
+### Configuration
+
+Authentication is **disabled by default**. To enable:
+
+```bash
+export AUTH_ENABLED=true
+export API_KEYS=key1,key2,key3
+```
+
+### REST API Authentication
+
+When authentication is enabled, all REST endpoints (except `/health`) require the `X-API-Key` header:
+
+```http
+POST /topics
+Content-Type: application/json
+X-API-Key: your-api-key-here
+
+{"name": "orders"}
+```
+
+**Protected Endpoints:**
+- `POST /topics`
+- `DELETE /topics/:name`
+- `GET /topics`
+- `GET /stats`
+
+**Unprotected Endpoints:**
+- `GET /health` (always accessible)
+
+### WebSocket Authentication
+
+When authentication is enabled, clients **must send an `auth` message as the first message** after connecting:
+
+```json
+{
+  "type": "auth",
+  "api_key": "your-api-key-here",
+  "request_id": "optional-uuid"
+}
+```
+
+**Response on success:**
+```json
+{
+  "type": "ack",
+  "request_id": "optional-uuid",
+  "status": "authenticated",
+  "ts": "2025-08-25T10:00:00Z"
+}
+```
+
+**Response on failure:**
+```json
+{
+  "type": "error",
+  "request_id": "optional-uuid",
+  "error": {
+    "code": "INVALID_API_KEY",
+    "message": "Invalid or expired API key"
+  },
+  "ts": "2025-08-25T10:00:00Z"
+}
+```
+
+**Important:**
+- Clients have 10 seconds to authenticate after connecting
+- Once authenticated, subsequent `auth` messages will be rejected
+- All other operations are blocked until authentication succeeds
+
+---
+
 ## WebSocket Endpoint
 
 **URL**: `ws://localhost:8080/ws?client_id=<optional-id>`
@@ -69,6 +145,23 @@ If `client_id` is not provided, a unique ID will be auto-generated.
 }
 ```
 
+#### 5. Authenticate (when AUTH_ENABLED=true)
+
+```json
+{
+  "type": "auth",
+  "api_key": "your-api-key-here",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**Fields:**
+- `type`: `"auth"`
+- `api_key`: Your API key (required when authentication is enabled)
+- `request_id`: Correlation ID (optional)
+
+**Note:** This must be the **first message** sent after connecting when `AUTH_ENABLED=true`.
+
 ### Server → Client Messages
 
 #### 1. Acknowledgment (ack)
@@ -119,6 +212,9 @@ If `client_id` is not provided, a unique ID will be auto-generated.
 - `BAD_REQUEST` - Invalid message format or missing required fields
 - `TOPIC_NOT_FOUND` - Attempting to publish/subscribe to non-existent topic
 - `SLOW_CONSUMER` - Subscriber queue overflow (backpressure triggered)
+- `UNAUTHORIZED` - Authentication required (first message must be `auth` when AUTH_ENABLED=true)
+- `INVALID_API_KEY` - API key is invalid or expired
+- `MISSING_API_KEY` - X-API-Key header missing (REST API only)
 - `INTERNAL` - Unexpected server error
 
 #### 4. Pong
@@ -154,11 +250,14 @@ If `client_id` is not provided, a unique ID will be auto-generated.
 
 ## REST API Endpoints
 
+**Note:** When `AUTH_ENABLED=true`, all endpoints (except `/health`) require the `X-API-Key` header.
+
 ### 1. Create Topic
 
 ```http
 POST /topics
 Content-Type: application/json
+X-API-Key: your-api-key-here
 
 {
   "name": "orders"
