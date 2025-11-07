@@ -274,10 +274,21 @@ func (e *PubSubEngine) GetHealth() models.HealthResponse {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
+	// Count unique subscribers (clients with at least one topic subscription)
+	uniqueSubscribers := 0
+	for _, client := range e.Clients {
+		client.mu.Lock()
+		hasSubscriptions := len(client.Topics) > 0
+		client.mu.Unlock()
+		if hasSubscriptions {
+			uniqueSubscribers++
+		}
+	}
+
 	return models.HealthResponse{
 		UptimeSec:   int(time.Since(e.startTime).Seconds()),
 		Topics:      len(e.Topics),
-		Subscribers: len(e.Clients),
+		Subscribers: uniqueSubscribers,
 	}
 }
 
